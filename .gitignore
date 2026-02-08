@@ -1,0 +1,62 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.env
+.venv
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Project Outputs & Logs
+outputs/
+results/
+logs/
+wandb/
+
+# Large Model Files & Datasets
+*.ckpt
+*.pth
+*.safetensors
+*.bin
+*.h5
+*.onnx
+*.pb
+*.pt
+
+# Wrapper Temporary Directories (created during execution)
+pid_temp_out/
+diff_protect_temp_out/
+instance_data/
+model_out/
+temp/
+tmp/
+
+# Avoid ignoring the modules directory itself as it contains submodules
+modules/ 

@@ -1,0 +1,10 @@
+{
+    "input_image": "test_data/cat.png",
+    "output_dir": "results/pid_sd3_test",
+    "protection_method": "pid",
+    "protection_model": "sd1.4",
+    "editing_method": "flow_edit",
+    "edit_model": "sd3",
+    "source_prompt": "a photo of a cat",
+    "target_prompt": "a photo of a dog"
+}
