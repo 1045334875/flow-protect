@@ -22,6 +22,8 @@ This project integrates the following research codes as submodules:
 ### Editing Methods (modules/)
 *   **FlowEdit**: [FlowEdit: Inversion-Free Text-Based Editing Using Pre-Trained Flow Models](https://github.com/fallenshock/FlowEdit) (ICCV 2025 Best Student Paper)
     *   **Environment**: Compatible with modern diffusers (Python 3.10+ recommended).
+    *   `conda create -n flowedit_env python=3.10`
+    *   `pip install -r modules/FlowEdit/requirements.txt` (if exists, otherwise standard diffusers)
     *   **Input**: Single image path.
     *   **Prompt**: Requires `source_prompt` (original image description) and `target_prompt` (desired edit).
 *   **Dreambooth**: Fine-tuning based editing (Integrated via PID's codebase / HuggingFace).
@@ -102,6 +104,20 @@ The main entry point is `main.py`. You can specify the protection method, the ed
 *   `--source_prompt`: Description of the original image.
 *   `--target_prompt`: Description of the desired edit.
 
+### Batch Evaluation (FlowEdit Style)
+
+To run FlowEdit on a dataset (e.g., the original `edits.yaml`) and evaluate the results without applying any protection:
+
+```bash
+python main.py \
+  --dataset_yaml modules/FlowEdit/edits.yaml \
+  --editing_method flow_edit \
+  --edit_model sd3 \
+  --output_dir results/flowedit_eval_only
+```
+
+*Note: Omitting `--protection_method` will skip the protection step, copying the original image as the "protected" input for the editing stage. The pipeline will then evaluate the quality of the edit (CLIP score, etc.) against the original.*
+
 ### Example
 
 Protect an image of a cat using **AtkPDM** (SD1.4) and attempt to edit it into a dog using **FlowEdit** (SD3):
@@ -133,6 +149,16 @@ python main.py \
     *   `evaluation/`: Metrics (LPIPS, PSNR, etc.).
     *   `pipeline.py`: Orchestrates the protection -> editing -> evaluation flow.
 *   `modules/`: Contains the external git submodules.
+
+## Scripts Overview
+
+*   **`run_experiment.sh`**: The **primary entry point** for running full experiments.
+    *   It reads `config.json`, detects the required protection/editing method, activates the correct Conda environment (`pid_env`, `atkpdm`, etc.), and runs `main.py`.
+    *   Use this for reproducing experiments or running batches.
+
+*   **`main.py`**: The core logic script.
+    *   Can be run directly if you are already in the correct environment.
+    *   Supports single-image mode and batch mode (via `--dataset_yaml`).
 
 ## Evaluation
 

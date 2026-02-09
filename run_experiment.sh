@@ -23,8 +23,19 @@ case "$PROTECTION_METHOD" in
     ENV_NAME="mist"
     ;;
   *)
-    echo "Unknown protection method: $PROTECTION_METHOD. Using default environment 'base'."
-    ENV_NAME="base"
+    # If no protection method or unknown, check editing method
+    if ! command -v jq &> /dev/null; then
+        EDITING_METHOD=$(python3 -c "import json; print(json.load(open('$CONFIG_FILE')).get('editing_method', ''))")
+    else
+        EDITING_METHOD=$(jq -r '.editing_method' $CONFIG_FILE)
+    fi
+    
+    if [ "$EDITING_METHOD" == "flow_edit" ]; then
+        ENV_NAME="flowedit_env"
+    else
+        echo "Unknown protection method: $PROTECTION_METHOD. Using default environment 'base'."
+        ENV_NAME="base"
+    fi
     ;;
 esac
 
