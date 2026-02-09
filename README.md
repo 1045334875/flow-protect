@@ -22,7 +22,7 @@ This project integrates the following research codes as submodules:
 ### Editing Methods (modules/)
 *   **FlowEdit**: [FlowEdit: Inversion-Free Text-Based Editing Using Pre-Trained Flow Models](https://github.com/fallenshock/FlowEdit) (ICCV 2025 Best Student Paper)
     *   **Environment**: Compatible with modern diffusers (Python 3.10+ recommended).
-    *   `conda create -n flowedit_env python=3.10`
+    *   `conda create -n flowedit python=3.10`
     *   `pip install -r modules/FlowEdit/requirements.txt` (if exists, otherwise standard diffusers)
     *   **Input**: Single image path.
     *   **Prompt**: Requires `source_prompt` (original image description) and `target_prompt` (desired edit).

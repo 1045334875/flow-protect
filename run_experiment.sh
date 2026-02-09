@@ -31,7 +31,7 @@ case "$PROTECTION_METHOD" in
     fi
     
     if [ "$EDITING_METHOD" == "flow_edit" ]; then
-        ENV_NAME="flowedit_env"
+        ENV_NAME="flowedit"
     else
         echo "Unknown protection method: $PROTECTION_METHOD. Using default environment 'base'."
         ENV_NAME="base"
