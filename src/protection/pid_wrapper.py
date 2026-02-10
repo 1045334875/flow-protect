@@ -165,22 +165,34 @@ def run_pid_protection(config: PIDConfig) -> Dict[str, Any]:
     class AttackModel(torch.nn.Module):
         def __init__(self):
             super().__init__()
-            to_tensor = transforms.ToTensor()
             self.epsilon = config.eps / 255
-            self.delta = [
-                torch.empty_like(to_tensor(Image.open(path))).uniform_(-self.epsilon, self.epsilon)
-                for path in dataset.instance_images_path
-            ]
+            
+            # Initialize delta tensors with proper dimensions matching the dataset transforms
+            # Use the dataset's transform to get the correct size
+            self.delta = []
+            for i in range(len(dataset.instance_images_path)):
+                # Get a sample from the dataset (already transformed to correct size)
+                sample = dataset[i]['pixel_values']
+                # Create delta with same shape as the transformed tensor
+                delta_tensor = torch.empty_like(sample).uniform_(-self.epsilon, self.epsilon)
+                self.delta.append(delta_tensor)
+            
+            # Make delta a proper parameter list
+            self.delta = torch.nn.ParameterList([torch.nn.Parameter(d) for d in self.delta])
 
         def forward(self, vae_model, x, index, poison=False):
             if poison:
-                self.delta[index].requires_grad_(True)
-                x = x + self.delta[index].to(dtype=weight_dtype)
+                # Get the delta parameter for this index
+                delta_param = self.delta[index]
+                delta_param.requires_grad_(True)
+                # Ensure same device
+                x = x + delta_param.to(dtype=weight_dtype, device=x.device)
             input_x = 2 * x - 1
             return vae_model.encode(input_x.to(device))
 
     attackmodel = AttackModel()
-    optimizer = torch.optim.SGD(attackmodel.delta, lr=0)
+    # Use SGD optimizer with the delta parameters
+    optimizer = torch.optim.SGD(attackmodel.delta.parameters(), lr=0)
     progress_bar = tqdm(range(config.max_train_steps), desc="PID Steps")
 
     os.makedirs(config.output_dir, exist_ok=True)
@@ -202,8 +214,9 @@ def run_pid_protection(config: PIDConfig) -> Dict[str, Any]:
                         wandb.log({"sample_image": wandb.Image(sample_path)}, step=step)
 
             # Compute loss
-            clean_embedding = attackmodel(vae, batch['pixel_values'], batch['index'], False)
-            poison_embedding = attackmodel(vae, batch['pixel_values'], batch['index'], True)
+            batch_index = batch['index'][0].item()  # Get scalar index
+            clean_embedding = attackmodel(vae, batch['pixel_values'], batch_index, False)
+            poison_embedding = attackmodel(vae, batch['pixel_values'], batch_index, True)
             clean_latent = clean_embedding.latent_dist
             poison_latent = poison_embedding.latent_dist
 
@@ -231,16 +244,22 @@ def run_pid_protection(config: PIDConfig) -> Dict[str, Any]:
             else:
                 loss = F.mse_loss(clean_latent.mean, poison_latent.mean, reduction="mean")
 
-            optimizer.zero_grad()
             loss.backward()
 
             # PGD update
-            delta = attackmodel.delta[batch['index']]
-            delta.requires_grad_(False)
-            delta += delta.grad.sign() * (1 / 255)
-            delta = torch.clamp(delta, -attackmodel.epsilon, attackmodel.epsilon)
-            delta = torch.clamp(delta, -batch['pixel_values'].detach().cpu(), 1 - batch['pixel_values'].detach().cpu())
-            attackmodel.delta[batch['index']] = delta.detach().squeeze(0)
+            delta_param = attackmodel.delta[batch_index]
+            with torch.no_grad():
+                # Update the parameter data directly
+                grad_sign = delta_param.grad.sign() if delta_param.grad is not None else 0
+                delta_param.data += grad_sign * config.step_size
+                delta_param.data = torch.clamp(delta_param.data, -attackmodel.epsilon, attackmodel.epsilon)
+                
+                # Ensure delta and pixel_values have compatible dimensions
+                pixel_values = batch['pixel_values'][0].detach().cpu()  # Remove batch dimension
+                delta_param.data = torch.clamp(delta_param.data, -pixel_values, 1 - pixel_values)
+            
+            # Clear gradients
+            optimizer.zero_grad()
 
             total_loss += loss.detach().cpu()
 
@@ -254,9 +273,13 @@ def run_pid_protection(config: PIDConfig) -> Dict[str, Any]:
     output_paths = []
     for i in range(len(dataset.instance_images_path)):
         img = dataset[i]['pixel_values']
-        img = to_image(img + attackmodel.delta[i])
+        # Add the delta perturbation
+        perturbed_img = img + attackmodel.delta[i].detach()
+        # Clamp to valid range
+        perturbed_img = torch.clamp(perturbed_img, 0, 1)
+        img_pil = to_image(perturbed_img)
         out_path = os.path.join(config.output_dir, f"{i}.png")
-        img.save(out_path)
+        img_pil.save(out_path)
         output_paths.append(out_path)
 
     if wandb_run:
