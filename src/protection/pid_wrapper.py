@@ -208,10 +208,15 @@ def run_pid_protection(config: PIDConfig) -> Dict[str, Any]:
             # Save images periodically
             if step % 25 == 0:
                 to_image = transforms.ToPILImage()
-                for i in range(len(dataset.instance_images_path)):
+                for i in range(0, len(dataset.instance_images_path)):
                     img = dataset[i]['pixel_values']
-                    img = to_image(img + attackmodel.delta[i])
-                    img.save(os.path.join(config.output_dir, f"{i}.png"))
+                    # Add delta and ensure proper range for PIL conversion
+                    perturbed_img = img + attackmodel.delta[i].detach()
+                    # Convert to float32 for PIL (PIL expects float32)
+                    perturbed_img = perturbed_img.to(dtype=torch.float32)
+                    perturbed_img = torch.clamp(perturbed_img, 0, 1)
+                    img_pil = to_image(perturbed_img)
+                    img_pil.save(os.path.join(config.output_dir, f"{i}.png"))
                 if wandb_run and config.wandb_log_images:
                     sample_path = os.path.join(config.output_dir, "0.png")
                     if os.path.exists(sample_path):
