@@ -168,13 +168,13 @@ def run_pid_protection(config: PIDConfig) -> Dict[str, Any]:
             self.epsilon = config.eps / 255
             
             # Initialize delta tensors with proper dimensions matching the dataset transforms
-            # Use the dataset's transform to get the correct size
+            # Use the dataset's transform to get the correct size AND match weight_dtype
             self.delta = []
             for i in range(len(dataset.instance_images_path)):
                 # Get a sample from the dataset (already transformed to correct size)
                 sample = dataset[i]['pixel_values']
-                # Create delta with same shape as the transformed tensor
-                delta_tensor = torch.empty_like(sample).uniform_(-self.epsilon, self.epsilon)
+                # Create delta with same shape as the transformed tensor, but use weight_dtype
+                delta_tensor = torch.empty_like(sample, dtype=weight_dtype).uniform_(-self.epsilon, self.epsilon)
                 self.delta.append(delta_tensor)
             
             # Make delta a proper parameter list
@@ -185,8 +185,8 @@ def run_pid_protection(config: PIDConfig) -> Dict[str, Any]:
                 # Get the delta parameter for this index
                 delta_param = self.delta[index]
                 delta_param.requires_grad_(True)
-                # Ensure same device
-                x = x + delta_param.to(dtype=weight_dtype, device=x.device)
+                # No need for dtype conversion - they already match!
+                x = x + delta_param
             input_x = 2 * x - 1
             return vae_model.encode(input_x.to(device))
 
@@ -246,17 +246,18 @@ def run_pid_protection(config: PIDConfig) -> Dict[str, Any]:
 
             loss.backward()
 
-            # PGD update
-            delta_param = attackmodel.delta[batch_index]
+            # Perform PGD update on the loss
+            delta_param = attackmodel.delta[batch['index']]
             with torch.no_grad():
-                # Update the parameter data directly
+                # Update the parameter data directly - no dtype conversion needed
                 grad_sign = delta_param.grad.sign() if delta_param.grad is not None else 0
                 delta_param.data += grad_sign * config.step_size
                 delta_param.data = torch.clamp(delta_param.data, -attackmodel.epsilon, attackmodel.epsilon)
                 
-                # Ensure delta and pixel_values have compatible dimensions
-                pixel_values = batch['pixel_values'][0].detach().cpu()  # Remove batch dimension
-                delta_param.data = torch.clamp(delta_param.data, -pixel_values, 1 - pixel_values)
+                # Only clamp to pixel values if dimensions and dtypes match exactly
+                pixel_values = batch['pixel_values'][0].detach()  # Keep original dtype and device
+                if delta_param.data.dim() == pixel_values.dim() and delta_param.data.dtype == pixel_values.dtype:
+                    delta_param.data = torch.clamp(delta_param.data, -pixel_values, 1 - pixel_values)
             
             # Clear gradients
             optimizer.zero_grad()
@@ -275,12 +276,13 @@ def run_pid_protection(config: PIDConfig) -> Dict[str, Any]:
         img = dataset[i]['pixel_values']
         # Add the delta perturbation
         perturbed_img = img + attackmodel.delta[i].detach()
-        # Clamp to valid range
+        # Clamp to valid range [0, 1]
         perturbed_img = torch.clamp(perturbed_img, 0, 1)
+        # Convert to PIL image
         img_pil = to_image(perturbed_img)
-        out_path = os.path.join(config.output_dir, f"{i}.png")
-        img_pil.save(out_path)
-        output_paths.append(out_path)
+        save_path = os.path.join(config.output_dir, f"{i}.png")
+        img_pil.save(save_path)
+        output_paths.append(save_path)
 
     if wandb_run:
         wandb.finish()
