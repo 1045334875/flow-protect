@@ -1,5 +1,4 @@
 import argparse
-import importlib.util
 import json
 import os
 import shutil
@@ -10,28 +9,14 @@ from typing import Dict, List, Optional
 import yaml
 
 # 计算项目根目录（scripts 的父目录）
-# 使用绝对路径，不依赖当前工作目录
 SCRIPT_DIR = os.path.abspath(os.path.dirname(__file__))
 ROOT_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
-# PID 模块路径 - 使用绝对路径
-PID_MODULE_PATH = os.path.abspath(os.path.join(ROOT_DIR, "modules", "Diffusion-PID-Protection"))
-PID_PY_PATH = os.path.join(PID_MODULE_PATH, "PID.py")
-
-# 检查文件是否存在
-if not os.path.exists(PID_PY_PATH):
-    raise FileNotFoundError(f"PID.py not found at: {PID_PY_PATH}\nROOT_DIR={ROOT_DIR}")
-
-# 动态加载 PID 模块（避免 sys.path 污染）
-spec = importlib.util.spec_from_file_location("pid_module", PID_PY_PATH)
-pid_module = importlib.util.module_from_spec(spec)
-sys.modules["pid_module"] = pid_module
-spec.loader.exec_module(pid_module)
-
-# 导入评估器
-from src.evaluation.metrics import MetricEvaluator  # noqa: E402
+# 使用本地 PID 实现（不再依赖 submodule）
+from src.protection.pid_core import PIDConfig, run_pid_protection, parse_args as pid_parse_args, main as pid_main
+from src.evaluation.metrics import MetricEvaluator
 
 
 def _resolve_input_path(raw_input_path: str, dataset_yaml: str) -> Optional[str]:
@@ -151,8 +136,8 @@ def main():
                     pid_args_list.append("--wandb_log_images")
 
             try:
-                pid_args = pid_module.parse_args(pid_args_list)
-                pid_module.main(pid_args)
+                parsed_args = pid_parse_args(pid_args_list)
+                pid_main(parsed_args)
             except Exception as e:
                 results.append({"image": filename, "status": "failed", "error": str(e)})
                 continue

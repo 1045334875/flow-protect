@@ -82,3 +82,4 @@ class ImageProtectionPipeline:
         results['editing_metrics'] = edit_metrics
         
         return results
+
