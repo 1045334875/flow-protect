@@ -59,6 +59,6 @@ temp/
 tmp/
 
 # Avoid ignoring the modules directory itself as it contains submodules
-modules/ 
+# modules/ 
 tests/
 CLIP/

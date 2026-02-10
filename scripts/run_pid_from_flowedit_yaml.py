@@ -10,11 +10,13 @@ from typing import Dict, List, Optional
 import yaml
 
 # 计算项目根目录（scripts 的父目录）
-ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+# 使用绝对路径，不依赖当前工作目录
+SCRIPT_DIR = os.path.abspath(os.path.dirname(__file__))
+ROOT_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
-# PID 模块路径
+# PID 模块路径 - 使用绝对路径
 PID_MODULE_PATH = os.path.abspath(os.path.join(ROOT_DIR, "modules", "Diffusion-PID-Protection"))
 PID_PY_PATH = os.path.join(PID_MODULE_PATH, "PID.py")
 
