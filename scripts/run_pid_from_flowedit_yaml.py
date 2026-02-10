@@ -1,4 +1,5 @@
 import argparse
+import importlib.util
 import json
 import os
 import shutil
@@ -8,15 +9,26 @@ from typing import Dict, List, Optional
 
 import yaml
 
+# 计算项目根目录（scripts 的父目录）
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT_DIR not in sys.path:
-    sys.path.append(ROOT_DIR)
+    sys.path.insert(0, ROOT_DIR)
 
-PID_MODULE_PATH = os.path.abspath(os.path.join(ROOT_DIR, "modules/Diffusion-PID-Protection"))
-if PID_MODULE_PATH not in sys.path:
-    sys.path.append(PID_MODULE_PATH)
+# PID 模块路径
+PID_MODULE_PATH = os.path.abspath(os.path.join(ROOT_DIR, "modules", "Diffusion-PID-Protection"))
+PID_PY_PATH = os.path.join(PID_MODULE_PATH, "PID.py")
 
-import PID as pid_module  # noqa: E402
+# 检查文件是否存在
+if not os.path.exists(PID_PY_PATH):
+    raise FileNotFoundError(f"PID.py not found at: {PID_PY_PATH}\nROOT_DIR={ROOT_DIR}")
+
+# 动态加载 PID 模块（避免 sys.path 污染）
+spec = importlib.util.spec_from_file_location("pid_module", PID_PY_PATH)
+pid_module = importlib.util.module_from_spec(spec)
+sys.modules["pid_module"] = pid_module
+spec.loader.exec_module(pid_module)
+
+# 导入评估器
 from src.evaluation.metrics import MetricEvaluator  # noqa: E402
 
 
