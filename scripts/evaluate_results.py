@@ -130,4 +130,4 @@ if __name__ == "__main__":
     main()
 
 
-# python evaluate_results.py --results_dir results/flowedit_eval_only --dataset_yaml modules/FlowEdit/edits.yaml
+# python scripts/evaluate_results.py --results_dir results/flowedit_eval_only --dataset_yaml modules/FlowEdit/edits.yaml
