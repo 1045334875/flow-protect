@@ -98,9 +98,10 @@ class PIDConfig:
 class PIDDataset(Dataset):
     """Dataset for PID protection."""
 
-    def __init__(self, instance_data_root: str, size: int = 512, center_crop: bool = False):
+    def __init__(self, instance_data_root: str, size: int = 512, center_crop: bool = False, dtype=torch.float32):
         self.size = size
         self.center_crop = center_crop
+        self.dtype = dtype  # Store the target dtype
         self.instance_images_path = list(Path(instance_data_root).iterdir())
         self.num_instance_images = len(self.instance_images_path)
         self.image_transforms = transforms.Compose([
@@ -121,7 +122,9 @@ class PIDDataset(Dataset):
             instance_image = instance_image.convert("RGB")
 
         example['index'] = index % self.num_instance_images
-        example['pixel_values'] = self.image_transforms(instance_image)
+        pixel_values = self.image_transforms(instance_image)
+        # Convert to target dtype
+        example['pixel_values'] = pixel_values.to(dtype=self.dtype)
         return example
 
 
@@ -151,11 +154,12 @@ def run_pid_protection(config: PIDConfig) -> Dict[str, Any]:
     vae.requires_grad_(False)
     vae.to(device, dtype=weight_dtype)
 
-    # Dataset and DataLoader
+    # Dataset and DataLoaders creation:
     dataset = PIDDataset(
         instance_data_root=config.instance_data_dir,
         size=config.resolution,
         center_crop=config.center_crop,
+        dtype=weight_dtype,  # Pass the target dtype
     )
     dataloader = torch.utils.data.DataLoader(
         dataset, batch_size=1, shuffle=True, num_workers=config.dataloader_num_workers,
@@ -171,10 +175,10 @@ def run_pid_protection(config: PIDConfig) -> Dict[str, Any]:
             # Use the dataset's transform to get the correct size AND match weight_dtype
             self.delta = []
             for i in range(len(dataset.instance_images_path)):
-                # Get a sample from the dataset (already transformed to correct size)
+                # Get a sample from the dataset (already transformed to correct size and dtype)
                 sample = dataset[i]['pixel_values']
-                # Create delta with same shape as the transformed tensor, but use weight_dtype
-                delta_tensor = torch.empty_like(sample, dtype=weight_dtype).uniform_(-self.epsilon, self.epsilon)
+                # Create delta with same shape and dtype as the transformed tensor
+                delta_tensor = torch.empty_like(sample).uniform_(-self.epsilon, self.epsilon)
                 self.delta.append(delta_tensor)
             
             # Make delta a proper parameter list
