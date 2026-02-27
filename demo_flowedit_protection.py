@@ -379,7 +379,7 @@ def main():
                        choices=['FLUX', 'SD3'],
                        help='模型类型')
     parser.add_argument('--image_path', type=str, 
-                       default='/home/ubuntu/FlowEdit/example_images/gas_station.png',
+                       default='modules/FlowEdit/example_images/gas_station.png',
                        help='输入图像路径')
     parser.add_argument('--output_dir', type=str, default='outputs',
                        help='输出目录')

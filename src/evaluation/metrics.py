@@ -98,7 +98,7 @@ class MetricEvaluator(Evaluator):
         if mse == 0:
             return 100.0
         max_pixel = 255.0
-        return 20 * np.log10(max_pixel / np.sqrt(mse))
+        return float(20 * np.log10(max_pixel / np.sqrt(mse)))
 
     def calculate_ssim(self, img1: Image.Image, img2: Image.Image) -> float:
         """
@@ -117,7 +117,7 @@ class MetricEvaluator(Evaluator):
         a_gray = np.array(img1.convert('L'))
         b_gray = np.array(img2.convert('L'))
         
-        return ssim(a_gray, b_gray, data_range=255)
+        return float(ssim(a_gray, b_gray, data_range=255))
 
     def calculate_clip_score(self, image: Image.Image, text: str) -> float:
         """
