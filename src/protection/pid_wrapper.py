@@ -256,7 +256,8 @@ def run_pid_protection(config: PIDConfig) -> Dict[str, Any]:
             loss.backward()
 
             # Perform PGD update on the loss
-            delta_param = attackmodel.delta[batch['index']]
+            batch_index = batch['index'][0].item()
+            delta_param = attackmodel.delta[batch_index]
             with torch.no_grad():
                 # Update the parameter data directly - no dtype conversion needed
                 grad_sign = delta_param.grad.sign() if delta_param.grad is not None else 0

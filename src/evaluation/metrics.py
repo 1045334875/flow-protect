@@ -61,23 +61,37 @@ class MetricEvaluator(Evaluator):
             transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
         ])
 
-    def _load_tensor(self, path_or_img: Union[str, Image.Image]):
+    def _load_tensor(self, path_or_img: Union[str, Image.Image], target_size=None):
         if isinstance(path_or_img, str):
             img = Image.open(path_or_img).convert('RGB')
         else:
             img = path_or_img.convert('RGB')
+            
+        if target_size is not None:
+            img = img.resize(target_size, Image.BILINEAR)
+            
         return self.transform_tensor(img).unsqueeze(0).to(self.device)
 
-    def _load_pil(self, path_or_img: Union[str, Image.Image]):
+    def _load_pil(self, path_or_img: Union[str, Image.Image], target_size=None):
         if isinstance(path_or_img, str):
-            return Image.open(path_or_img).convert('RGB')
-        return path_or_img.convert('RGB')
+            img = Image.open(path_or_img).convert('RGB')
+        else:
+            img = path_or_img.convert('RGB')
+            
+        if target_size is not None:
+            img = img.resize(target_size, Image.BILINEAR)
+            
+        return img
 
     def calculate_psnr(self, img1: Image.Image, img2: Image.Image) -> float:
         """
         Calculate Peak Signal-to-Noise Ratio (PSNR)
         Based on AtkPDM and Diff-Protect implementations.
         """
+        # Resize img2 to match img1 if necessary
+        if img1.size != img2.size:
+            img2 = img2.resize(img1.size, Image.BILINEAR)
+            
         a = np.array(img1).astype(np.float32)
         b = np.array(img2).astype(np.float32)
         mse = np.mean((a - b) ** 2)
@@ -93,6 +107,10 @@ class MetricEvaluator(Evaluator):
         """
         if ssim is None:
             return -1.0
+        
+        # Resize img2 to match img1 if necessary
+        if img1.size != img2.size:
+            img2 = img2.resize(img1.size, Image.BILINEAR)
         
         # Convert to grayscale for standard SSIM, or use multichannel=True
         # AtkPDM converts to Gray
@@ -132,8 +150,12 @@ class MetricEvaluator(Evaluator):
         if self.lpips_fn is None:
             return -1.0
             
-        t1 = self._load_tensor(path1)
-        t2 = self._load_tensor(path2)
+        # Load first image to get target size
+        img1 = self._load_pil(path1)
+        target_size = img1.size
+        
+        t1 = self._load_tensor(img1)
+        t2 = self._load_tensor(path2, target_size=target_size)
         
         with torch.no_grad():
             dist = self.lpips_fn(t1, t2).item()
@@ -152,7 +174,7 @@ class MetricEvaluator(Evaluator):
         img_orig = self._load_pil(original_image_path)
         img_prot = self._load_pil(protected_image_path)
         
-        # LPIPS
+        # LPIPS (handles resizing internally now)
         metrics['lpips'] = self.calculate_lpips(original_image_path, protected_image_path)
         
         # SSIM
@@ -178,6 +200,7 @@ class MetricEvaluator(Evaluator):
         metrics['clip_score'] = self.calculate_clip_score(img_edit, target_prompt)
         
         # Structure distance from original (how much did we change content?)
+        # Calculate LPIPS between original and edited
         metrics['structure_dist_original'] = self.calculate_lpips(original_image_path, edited_image_path)
         
         return metrics

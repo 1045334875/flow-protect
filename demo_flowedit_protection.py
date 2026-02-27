@@ -21,17 +21,20 @@ import sys
 from pathlib import Path
 from typing import Optional, Tuple
 
+# 添加项目根目录到路径
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = SCRIPT_DIR
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
 # 导入自定义模块
-sys.path.insert(0, '/home/ubuntu')
-from protective_noise_v2 import (
+from src.protection.flowedit_protection import (
     FrequencyDomainNoise,
     FeatureSpaceAdversarialNoise,
     MultiScaleTextureNoise,
     VelocityFieldAdversarialNoise,
     ProtectiveNoiseOptimizer,
-    NoiseConfig
-)
-from loss_functions import (
+    NoiseConfig,
     EditQualityLoss,
     ImperceptibilityLoss,
     RobustnessLoss,

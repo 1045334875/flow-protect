@@ -1,6 +1,6 @@
 from typing import Dict, Any
 from .interfaces import ProtectionMethod, EditingMethod, Evaluator
-from .protection import AtkPDMProtection, DiffProtectWrapper, PIDProtection
+from .protection import AtkPDMProtection, DiffProtectWrapper, PIDProtection, FlowEditProtectionWrapper
 from .editing import FlowEditWrapper, DreamboothWrapper
 from .evaluation import MetricEvaluator
 
@@ -9,7 +9,8 @@ class ImageProtectionPipeline:
         self.protection_methods: Dict[str, ProtectionMethod] = {
             "atk_pdm": AtkPDMProtection(),
             "diff_protect": DiffProtectWrapper(),
-            "pid": PIDProtection()
+            "pid": PIDProtection(),
+            "flowedit_protection": FlowEditProtectionWrapper()
         }
         self.editing_methods: Dict[str, EditingMethod] = {
             "flow_edit": FlowEditWrapper(),
@@ -34,7 +35,12 @@ class ImageProtectionPipeline:
         print(f"Running Protection: {protection_method} with {protection_model}...")
         prot_method = self.protection_methods.get(protection_method.lower())
         if not prot_method:
-            raise ValueError(f"Unknown protection method: {protection_method}")
+            # Fallback for simpler names or aliases
+            if protection_method == "flowedit":
+                prot_method = self.protection_methods.get("flowedit_protection")
+            
+            if not prot_method:
+                raise ValueError(f"Unknown protection method: {protection_method}")
             
         protected_image_path = f"{output_dir}/protected.png"
         prot_result = prot_method.protect(
@@ -47,13 +53,17 @@ class ImageProtectionPipeline:
         results['protection'] = prot_result
         
         if prot_result.get('status') == 'failed':
-            print("Protection failed.")
+            print(f"Protection failed: {prot_result.get('error')}")
             return results
 
         # 2. Evaluation (Protection)
         print("Evaluating Protection...")
-        prot_metrics = self.evaluator.evaluate_protection(input_image, protected_image_path)
-        results['protection_metrics'] = prot_metrics
+        try:
+            prot_metrics = self.evaluator.evaluate_protection(input_image, protected_image_path)
+            results['protection_metrics'] = prot_metrics
+        except Exception as e:
+            print(f"Protection evaluation failed: {e}")
+            results['protection_metrics'] = {"error": str(e)}
         
         # 3. Editing
         print(f"Running Editing: {editing_method} with {edit_model}...")
@@ -62,24 +72,28 @@ class ImageProtectionPipeline:
             raise ValueError(f"Unknown editing method: {editing_method}")
             
         edited_image_path = f"{output_dir}/edited.png"
-        edit_result = edit_method.edit(
-            input_image_path=protected_image_path,
-            output_image_path=edited_image_path,
-            source_prompt=source_prompt,
-            target_prompt=target_prompt,
-            model_name=edit_model,
-            **kwargs
-        )
-        results['editing'] = edit_result
-        
-        if edit_result.get('status') == 'failed':
-            print("Editing failed.")
-            return results
+        try:
+            edit_result = edit_method.edit(
+                input_image_path=protected_image_path,
+                output_image_path=edited_image_path,
+                source_prompt=source_prompt,
+                target_prompt=target_prompt,
+                model_name=edit_model,
+                **kwargs
+            )
+            results['editing'] = edit_result
+            
+            if edit_result.get('status') == 'failed':
+                print(f"Editing failed: {edit_result.get('error')}")
+                return results
 
-        # 4. Evaluation (Editing)
-        print("Evaluating Editing...")
-        edit_metrics = self.evaluator.evaluate_editing(protected_image_path, edited_image_path, target_prompt)
-        results['editing_metrics'] = edit_metrics
+            # 4. Evaluation (Editing)
+            print("Evaluating Editing...")
+            edit_metrics = self.evaluator.evaluate_editing(protected_image_path, edited_image_path, target_prompt)
+            results['editing_metrics'] = edit_metrics
+        except Exception as e:
+            print(f"Editing execution failed: {e}")
+            results['editing'] = {"status": "failed", "error": str(e)}
         
         return results
 
