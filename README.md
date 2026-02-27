@@ -74,7 +74,7 @@ Each module has specific requirements for inputs and prompts. The unified pipeli
     git clone https://github.com/psyker-team/mist Diff-Protect
 
     # Clone PID
-    git clone https://github.com/alchemi5t/Diffusion-PID-Protection
+    git clone https://github.com/PKU-ML/Diffusion-PID-Protection.git
 
     # Clone FlowEdit
     git clone https://github.com/fallenshock/FlowEdit

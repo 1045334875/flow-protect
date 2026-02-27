@@ -1,7 +1,24 @@
 import torch
 import lpips
 import numpy as np
-import clip
+
+# Try to import CLIP from local modules first, fallback to pip install
+try:
+    import clip
+except ImportError:
+    # Try importing from local Diffusion-PID-Protection module
+    import sys
+    import os
+    clip_path = os.path.join(os.path.dirname(__file__), '../../modules/Diffusion-PID-Protection')
+    if os.path.exists(clip_path):
+        sys.path.insert(0, clip_path)
+        try:
+            import clip
+        except ImportError:
+            clip = None
+    else:
+        clip = None
+
 from PIL import Image
 from torchvision import transforms
 from typing import Dict, Optional, List, Union
