@@ -461,6 +461,10 @@ class MultiScaleTextureNoise:
                         orientation = orient_idx * np.pi / self.num_orientations
                         filter_size = min(2 ** (scale_idx + 3), 31)  # 滤波器大小随尺度增加
                         
+                        # Ensure filter size is odd for symmetric padding
+                        if filter_size % 2 == 0:
+                            filter_size += 1
+                        
                         gabor = self._create_gabor_filter(filter_size, 
                                                          wavelength=filter_size/2,
                                                          orientation=orientation,
@@ -474,7 +478,21 @@ class MultiScaleTextureNoise:
                         level_c = level[c:c+1, :, :].unsqueeze(0)  # [1, 1, H, W]
                         response_2d = response.unsqueeze(0).unsqueeze(0)  # [1, 1, size, size]
                         
-                        filtered = F.conv2d(level_c, response_2d, padding=filter_size//2)
+                        # Use same padding explicitly
+                        padding = filter_size // 2
+                        filtered = F.conv2d(level_c, response_2d, padding=padding)
+                        
+                        # Debug info if mismatch
+                        if filtered.shape[-2:] != level.shape[-2:]:
+                            print(f"DEBUG: Mismatch! Level: {level.shape}, Filtered: {filtered.shape}")
+                            print(f"DEBUG: filter_size: {filter_size}, padding: {padding}, K: {response_2d.shape}")
+                            # Force crop or pad to match
+                            fh, fw = filtered.shape[-2:]
+                            lh, lw = level.shape[-2:]
+                            if fh > lh: filtered = filtered[..., :lh, :]
+                            if fw > lw: filtered = filtered[..., :, :lw]
+                            # If smaller, we have a problem, but let's see
+                        
                         noise[c] += filtered.squeeze()[:level_h, :level_w]
                 
                 noisy_level = level + noise
