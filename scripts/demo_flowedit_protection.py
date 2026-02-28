@@ -28,13 +28,15 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 # 导入自定义模块
-from src.protection.flowedit_protection import (
+from src.protection.flowedit_protection.protective_noise import (
     FrequencyDomainNoise,
     FeatureSpaceAdversarialNoise,
     MultiScaleTextureNoise,
     VelocityFieldAdversarialNoise,
     ProtectiveNoiseOptimizer,
-    NoiseConfig,
+    NoiseConfig
+)
+from src.protection.flowedit_protection.loss_functions import (
     EditQualityLoss,
     ImperceptibilityLoss,
     RobustnessLoss,

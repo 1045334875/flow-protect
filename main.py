@@ -119,20 +119,24 @@ def main():
             
             # Check if protection is requested
             if args.protection_method:
-                prot_method = pipeline.protection_methods.get(args.protection_method)
-                try:
-                    prot_result = prot_method.protect(
-                        input_image_path=input_path,
-                        output_image_path=protected_path,
-                        model_name=args.protection_model,
-                        prompt=source_prompt
-                    )
-                    if prot_result.get('status') == 'failed':
-                        print(f"Protection failed for {filename}: {prot_result.get('error')}")
+                # Check if protected file already exists
+                if os.path.exists(protected_path):
+                    print(f"  Skipping protection: {protected_path} already exists.")
+                else:
+                    prot_method = pipeline.protection_methods.get(args.protection_method)
+                    try:
+                        prot_result = prot_method.protect(
+                            input_image_path=input_path,
+                            output_image_path=protected_path,
+                            model_name=args.protection_model,
+                            prompt=source_prompt
+                        )
+                        if prot_result.get('status') == 'failed':
+                            print(f"Protection failed for {filename}: {prot_result.get('error')}")
+                            continue
+                    except Exception as e:
+                        print(f"Protection error for {filename}: {e}")
                         continue
-                except Exception as e:
-                    print(f"Protection error for {filename}: {e}")
-                    continue
             else:
                 # No protection, just copy
                 shutil.copy(input_path, protected_path)
@@ -179,6 +183,29 @@ def main():
         with open(os.path.join(batch_output_dir, "batch_metrics.json"), "w") as f:
             json.dump(all_metrics, f, indent=4)
             
+        # Save run command and config
+        import sys
+        import time
+        
+        timestamp = time.strftime("%Y%m%d-%H%M%S")
+        
+        # Save command
+        cmd = "python " + " ".join(sys.argv)
+        with open(os.path.join(batch_output_dir, f"run_command_{timestamp}.sh"), "w") as f:
+            f.write(cmd + "\n")
+            
+        # Save config
+        current_config = {
+            "dataset_yaml": args.dataset_yaml,
+            "output_dir": args.output_dir,
+            "protection_method": args.protection_method,
+            "protection_model": args.protection_model,
+            "editing_method": args.editing_method,
+            "edit_model": args.edit_model
+        }
+        with open(os.path.join(batch_output_dir, f"config_{timestamp}.json"), "w") as f:
+            json.dump(current_config, f, indent=4)
+
         print(f"Batch processing complete. Results in {batch_output_dir}")
         return
 
