@@ -341,8 +341,13 @@ class MultiScaleTextureNoise:
             Gabor滤波器 [size, size]
         """
         # 创建坐标网格
-        x = torch.arange(-size//2, size//2 + 1, device=device, dtype=torch.float32)
-        y = torch.arange(-size//2, size//2 + 1, device=device, dtype=torch.float32)
+        # Ensure size is odd for symmetry
+        if size % 2 == 0:
+            size += 1
+            
+        # Use linspace to guarantee exact size
+        x = torch.linspace(-(size//2), size//2, size, device=device)
+        y = torch.linspace(-(size//2), size//2, size, device=device)
         X, Y = torch.meshgrid(x, y, indexing='xy')
         
         # 旋转坐标
@@ -484,14 +489,20 @@ class MultiScaleTextureNoise:
                         
                         # Debug info if mismatch
                         if filtered.shape[-2:] != level.shape[-2:]:
-                            print(f"DEBUG: Mismatch! Level: {level.shape}, Filtered: {filtered.shape}")
-                            print(f"DEBUG: filter_size: {filter_size}, padding: {padding}, K: {response_2d.shape}")
                             # Force crop or pad to match
                             fh, fw = filtered.shape[-2:]
                             lh, lw = level.shape[-2:]
+                            
+                            # Crop if larger
                             if fh > lh: filtered = filtered[..., :lh, :]
                             if fw > lw: filtered = filtered[..., :, :lw]
-                            # If smaller, we have a problem, but let's see
+                            
+                            # Pad if smaller
+                            if fh < lh or fw < lw:
+                                pad_h = max(0, lh - fh)
+                                pad_w = max(0, lw - fw)
+                                # Pad right and bottom
+                                filtered = F.pad(filtered, (0, pad_w, 0, pad_h))
                         
                         noise[c] += filtered.squeeze()[:level_h, :level_w]
                 
