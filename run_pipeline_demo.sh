@@ -9,19 +9,22 @@ OUTPUT_DIR="results/flowedit_demo"
 # Mist 是 diff_protect 的一种模式
 PROTECTION_METHOD="diff_protect"
 PROTECTION_MODEL="sd1.4"
+# 设置攻击模式 (mist, advdm, sds, sdsT, texture_only)
+ATTACK_MODE="advdm"
 
 # 设置编辑方法 (支持 flow_edit)
 EDITING_METHOD="flow_edit"
 EDIT_MODEL="sd3"  # 或 flux
 
-# 自动生成输出目录名称
-OUTPUT_DIR="results/${PROTECTION_METHOD}_${EDITING_METHOD}"mkdir -p "$OUTPUT_DIR"
+# 自动生成输出目录名称 (加上 attack_mode 以区分)
+OUTPUT_DIR="results/${PROTECTION_METHOD}_${ATTACK_MODE}_${EDITING_METHOD}"
+mkdir -p "$OUTPUT_DIR"
 
 echo "========================================================"
 echo "Starting FlowEdit Protection Pipeline Demo"
 echo "Dataset: $DATASET_YAML"
 echo "Output Directory: $OUTPUT_DIR"
-echo "Protection: $PROTECTION_METHOD (Model: $PROTECTION_MODEL)"
+echo "Protection: $PROTECTION_METHOD (Mode: $ATTACK_MODE, Model: $PROTECTION_MODEL)"
 echo "Editing: $EDITING_METHOD (Model: $EDIT_MODEL)"
 echo "========================================================"
 
@@ -33,7 +36,7 @@ python main.py \
   --output_dir "$OUTPUT_DIR" \
   --protection_method "$PROTECTION_METHOD" \
   --protection_model "$PROTECTION_MODEL" \
-  --attack_mode "mist" \
+  --attack_mode "$ATTACK_MODE" \
   --editing_method "$EDITING_METHOD" \
   --edit_model "$EDIT_MODEL"
 
