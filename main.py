@@ -15,9 +15,20 @@ def main():
     parser.add_argument("--output_dir", type=str, help="Directory to save results")
     
     # Protection
-    parser.add_argument("--protection_method", type=str, choices=["atk_pdm", "diff_protect", "pid"], help="Protection method")
+    parser.add_argument("--protection_method", type=str, choices=["atk_pdm", "diff_protect", "pid", "flowedit_protection"], help="Protection method")
     parser.add_argument("--protection_model", type=str, default="sd1.4", choices=["sd1.4", "sd3", "flux"], help="Model used for protection generation")
     parser.add_argument("--attack_mode", type=str, default="mist", help="Attack mode for diff_protect (mist, advdm, etc.)")
+    
+    # FlowEdit Protection specific arguments
+    parser.add_argument("--freq_enabled", action="store_true", help="Enable frequency domain noise")
+    parser.add_argument("--no_freq_enabled", action="store_true", help="Disable frequency domain noise")
+    parser.add_argument("--texture_enabled", action="store_true", help="Enable texture noise")
+    parser.add_argument("--no_texture_enabled", action="store_true", help="Disable texture noise")
+    parser.add_argument("--feature_enabled", action="store_true", help="Enable feature noise")
+    parser.add_argument("--no_feature_enabled", action="store_true", help="Disable feature noise")
+    parser.add_argument("--velocity_enabled", action="store_true", help="Enable velocity field noise")
+    parser.add_argument("--no_velocity_enabled", action="store_true", help="Disable velocity field noise")
+    parser.add_argument("--eps", type=float, default=8.0, help="Linf epsilon for protection")
     
     # Editing
     parser.add_argument("--editing_method", type=str, choices=["flow_edit", "dreambooth"], help="Editing method")
@@ -126,12 +137,38 @@ def main():
                 else:
                     prot_method = pipeline.protection_methods.get(args.protection_method)
                     try:
+                        # Prepare kwargs for protection method
+                        protection_kwargs = {}
+                        if args.protection_method == "flowedit_protection":
+                            # Handle boolean flags
+                            freq_enabled = args.freq_enabled and not args.no_freq_enabled
+                            texture_enabled = args.texture_enabled and not args.no_texture_enabled  
+                            feature_enabled = args.feature_enabled and not args.no_feature_enabled
+                            velocity_enabled = args.velocity_enabled and not args.no_velocity_enabled
+                            
+                            # Default to freq+texture if none specified
+                            if not any([freq_enabled, texture_enabled, feature_enabled, velocity_enabled]):
+                                freq_enabled = True
+                                texture_enabled = True
+                            
+                            protection_kwargs = {
+                                "freq_enabled": freq_enabled,
+                                "texture_enabled": texture_enabled,
+                                "feature_enabled": feature_enabled,
+                                "velocity_enabled": velocity_enabled,
+                                "eps": args.eps
+                            }
+                        elif args.protection_method == "diff_protect":
+                            protection_kwargs = {
+                                "attack_mode": args.attack_mode
+                            }
+                        
                         prot_result = prot_method.protect(
                         input_image_path=input_path,
                         output_image_path=protected_path,
                         model_name=args.protection_model,
                         prompt=source_prompt,
-                        attack_mode=args.attack_mode
+                        **protection_kwargs
                     )
                         if prot_result.get('status') == 'failed':
                             print(f"Protection failed for {filename}: {prot_result.get('error')}")
