@@ -53,15 +53,15 @@ class FlowEditProtectionWrapper(ProtectionMethod):
             image_tensor = torch.from_numpy(image_array).permute(2, 0, 1).unsqueeze(0).to(self.device)
             
             # Parse config from kwargs
-            eps = kwargs.get('eps', 8.0)
+            eps = kwargs.get('eps', 16.0)  # 增大默认 epsilon
             noise_config = NoiseConfig(
                 freq_enabled=kwargs.get('freq_enabled', True),
                 texture_enabled=kwargs.get('texture_enabled', True),
                 feature_enabled=kwargs.get('feature_enabled', False), # Default false as it needs feature extractor
                 velocity_enabled=kwargs.get('velocity_enabled', False), # Default false as it needs flow model
                 
-                freq_weight=kwargs.get('freq_weight', 0.5),
-                texture_weight=kwargs.get('texture_weight', 0.5),
+                freq_weight=kwargs.get('freq_weight', 1.0),  # 增大权重
+                texture_weight=kwargs.get('texture_weight', 1.0),  # 增大权重
                 feature_weight=kwargs.get('feature_weight', 0.0),
                 velocity_weight=kwargs.get('velocity_weight', 0.0),
                 

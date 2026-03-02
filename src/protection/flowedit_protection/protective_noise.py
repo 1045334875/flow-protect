@@ -645,36 +645,53 @@ class ProtectiveNoiseOptimizer:
         Returns:
             添加综合噪声后的图像
         """
-        noisy_image = image.clone()
+        # 累积噪声
+        total_noise = torch.zeros_like(image)
         total_weight = 0.0
         
         # 频域噪声
         if self.config.freq_enabled and self.freq_noise is not None and \
            self.config.freq_weight > 0:
             freq_noisy = self.freq_noise.generate(image)
-            noisy_image = noisy_image * (1 - self.config.freq_weight) + \
-                         freq_noisy * self.config.freq_weight
+            freq_noise = freq_noisy - image  # 提取噪声部分
+            total_noise = total_noise + freq_noise * self.config.freq_weight
             total_weight += self.config.freq_weight
         
         # 纹理噪声
         if self.config.texture_enabled and self.texture_noise is not None and \
            self.config.texture_weight > 0:
             texture_noisy = self.texture_noise.generate(image)
-            noisy_image = noisy_image * (1 - self.config.texture_weight) + \
-                         texture_noisy * self.config.texture_weight
+            texture_noise = texture_noisy - image  # 提取噪声部分
+            total_noise = total_noise + texture_noise * self.config.texture_weight
             total_weight += self.config.texture_weight
         
         # 特征空间噪声
         if self.config.feature_enabled and self.feature_noise is not None and \
            self.config.feature_weight > 0 and source_image is not None:
             feature_noisy = self.feature_noise.generate(image, source_image)
-            noisy_image = noisy_image * (1 - self.config.feature_weight) + \
-                         feature_noisy * self.config.feature_weight
+            feature_noise = feature_noisy - image  # 提取噪声部分
+            total_noise = total_noise + feature_noise * self.config.feature_weight
             total_weight += self.config.feature_weight
         
-        # 归一化
+        # 速度场噪声
+        if self.config.velocity_enabled and self.velocity_noise is not None and \
+           self.config.velocity_weight > 0:
+            velocity_noisy = self.velocity_noise.generate(image)
+            velocity_noise = velocity_noisy - image  # 提取噪声部分
+            total_noise = total_noise + velocity_noise * self.config.velocity_weight
+            total_weight += self.config.velocity_weight
+        
+        # 归一化噪声权重
         if total_weight > 0:
-            noisy_image = torch.clamp(noisy_image, 0, 1)
+            total_noise = total_noise / total_weight
+        
+        # 应用 L∞ 约束
+        eps = self.config.linf_epsilon
+        total_noise = torch.clamp(total_noise, -eps, eps)
+        
+        # 添加噪声到原图
+        noisy_image = image + total_noise
+        noisy_image = torch.clamp(noisy_image, 0, 1)
         
         return noisy_image
 
