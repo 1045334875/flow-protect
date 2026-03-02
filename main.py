@@ -17,6 +17,7 @@ def main():
     # Protection
     parser.add_argument("--protection_method", type=str, choices=["atk_pdm", "diff_protect", "pid"], help="Protection method")
     parser.add_argument("--protection_model", type=str, default="sd1.4", choices=["sd1.4", "sd3", "flux"], help="Model used for protection generation")
+    parser.add_argument("--attack_mode", type=str, default="mist", help="Attack mode for diff_protect (mist, advdm, etc.)")
     
     # Editing
     parser.add_argument("--editing_method", type=str, choices=["flow_edit", "dreambooth"], help="Editing method")
@@ -126,11 +127,12 @@ def main():
                     prot_method = pipeline.protection_methods.get(args.protection_method)
                     try:
                         prot_result = prot_method.protect(
-                            input_image_path=input_path,
-                            output_image_path=protected_path,
-                            model_name=args.protection_model,
-                            prompt=source_prompt
-                        )
+                        input_image_path=input_path,
+                        output_image_path=protected_path,
+                        model_name=args.protection_model,
+                        prompt=source_prompt,
+                        attack_mode=args.attack_mode
+                    )
                         if prot_result.get('status') == 'failed':
                             print(f"Protection failed for {filename}: {prot_result.get('error')}")
                             continue
