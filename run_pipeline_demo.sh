@@ -10,7 +10,7 @@ OUTPUT_DIR="results/flowedit_demo"
 PROTECTION_METHOD="diff_protect"
 PROTECTION_MODEL="sd1.4"
 # 设置攻击模式 (mist, advdm, sds, sdsT, texture_only)
-ATTACK_MODE="advdm"
+ATTACK_MODE="mist"
 
 # 设置编辑方法 (支持 flow_edit)
 EDITING_METHOD="flow_edit"

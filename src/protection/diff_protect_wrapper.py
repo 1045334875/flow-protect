@@ -4,7 +4,24 @@ import shutil
 import tempfile
 import subprocess
 from typing import Dict, Any
+import numpy as np
+from PIL import Image
+import torch
+
 from ..interfaces import ProtectionMethod
+
+# Add Diff-Protect code path to sys.path
+DIFF_PROTECT_CODE_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../modules/Diff-Protect/code"))
+if DIFF_PROTECT_CODE_PATH not in sys.path:
+    sys.path.insert(0, DIFF_PROTECT_CODE_PATH)
+
+# Import Diff-Protect functions
+try:
+    from diff_mist import init, infer, load_image_from_path
+    DIFF_PROTECT_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: Could not import Diff-Protect functions: {e}")
+    DIFF_PROTECT_AVAILABLE = False
 
 class DiffProtectWrapper(ProtectionMethod):
     """
@@ -33,18 +50,48 @@ class DiffProtectWrapper(ProtectionMethod):
                 **kwargs) -> Dict[str, Any]:
         
         """
-        Apply Diff-Protect protection to an image.
+        Apply Diff-Protect protection to an image using direct function calls.
+        Falls back to subprocess if direct import fails.
+        """
         
-        Diff-Protect computes loss through a target_model that combines:
-        1. Semantic loss: Measures how well the image matches the text prompt
-        2. Textural loss: Measures distance in latent space between input and target
-        3. Fused loss: Combines both semantic and textural losses
+        if DIFF_PROTECT_AVAILABLE:
+            # Try direct function call first
+            result = self._protect_direct(
+                input_image_path, output_image_path, model_name, prompt,
+                attack_mode, epsilon, steps, alpha, input_size, g_mode,
+                using_target, target_rate, device, **kwargs
+            )
+            if result["status"] == "success":
+                return result
+            else:
+                print(f"Direct method failed: {result.get('error', 'Unknown error')}")
+                print("Falling back to subprocess method...")
         
-        For SD1.4, the loss computation happens in the target_model.forward() method:
-        - Mode 'advdm': Uses semantic loss only (negative gradient direction)
-        - Mode 'texture_only': Uses textural loss only (MSE in latent space)
-        - Mode 'mist': Combines both losses with configurable weights
-        - Mode 'sds': Uses score distillation for faster convergence
+        # Fallback to subprocess method
+        return self.protect_subprocess_fallback(
+            input_image_path, output_image_path, model_name, prompt,
+            attack_mode, epsilon, steps, alpha, input_size, g_mode,
+            using_target, target_rate, device, **kwargs
+        )
+    
+    def _protect_direct(self, 
+                input_image_path: str, 
+                output_image_path: str, 
+                model_name: str = "sd1.4", 
+                prompt: str = "",
+                attack_mode: str = "mist",
+                epsilon: float = 16.0,
+                steps: int = 100,
+                alpha: float = 1.0,
+                input_size: int = 512,
+                g_mode: str = "+",
+                using_target: bool = False,
+                target_rate: int = 5,
+                device: int = 0,
+                **kwargs) -> Dict[str, Any]:
+        
+        """
+        Direct implementation using imported Diff-Protect functions.
         
         Args:
             input_image_path: Path to input image
@@ -60,10 +107,148 @@ class DiffProtectWrapper(ProtectionMethod):
             using_target: Whether to use target guidance for targeted attacks
             target_rate: Weight for target loss component (higher = more emphasis on semantic)
             device: GPU device ID
-            **kwargs: Additional parameters (diff_pgd, etc.)
+            **kwargs: Additional parameters
             
         Returns:
             Dict with status and metadata including attack parameters used
+        """
+        
+        # Check if input file exists
+        if not os.path.exists(input_image_path):
+            return {"status": "failed", "error": f"Input image not found: {input_image_path}"}
+        
+        try:
+            # Set default prompt if not provided
+            if not prompt:
+                prompt = "a photo"
+            
+            # Map attack mode to numeric mode for diff_mist
+            mode_map = {
+                "advdm": 0,      # semantic only
+                "texture_only": 1, # texture only  
+                "mist": 2,       # fused (semantic + texture)
+                "sds": "sds",    # SDS mode
+                "sdsT": "sds"    # SDS with target (will set using_target=True)
+            }
+            
+            mode = mode_map.get(attack_mode, 2)
+            
+            # For sdsT, enable target usage
+            if attack_mode == "sdsT":
+                using_target = True
+            
+            # Change working directory to Diff-Protect code directory
+            original_cwd = os.getcwd()
+            os.chdir(self.code_dir)
+            
+            try:
+                # Initialize the model and config
+                config = init(
+                    epsilon=int(epsilon), 
+                    steps=steps, 
+                    alpha=int(alpha),
+                    input_size=input_size,
+                    mode=mode,
+                    rate=target_rate,
+                    g_mode=g_mode,
+                    device=device,
+                    input_prompt=prompt
+                )
+                
+                # Load the input image
+                img = load_image_from_path(input_image_path, input_size)
+                
+                # Load target image if needed (use a default target for texture modes)
+                target_image_path = os.path.join(self.code_dir, "test_images/target/MIST.png")
+                tar_img = None
+                if os.path.exists(target_image_path):
+                    tar_img = load_image_from_path(target_image_path, input_size)
+                else:
+                    # If no target image, use the input image itself
+                    tar_img = img
+                
+                # Run the inference
+                output_image, edit_one_step, edit_multi_step = infer(
+                    img=img,
+                    config=config,
+                    tar_img=tar_img,
+                    diff_pgd=kwargs.get('diff_pgd', [False, 0.2, 'ddim100']),
+                    using_target=using_target,
+                    device=device
+                )
+                
+                # Ensure output directory exists
+                os.makedirs(os.path.dirname(output_image_path), exist_ok=True)
+                
+                # Save the main result (attacked image)
+                output_pil = Image.fromarray(output_image.astype(np.uint8))
+                output_pil.save(output_image_path)
+                
+                # Save additional outputs if requested
+                additional_outputs = {}
+                output_dir = os.path.dirname(output_image_path)
+                base_name = os.path.splitext(os.path.basename(output_image_path))[0]
+                
+                # Save onestep and multistep results
+                if edit_one_step is not None:
+                    onestep_path = os.path.join(output_dir, f"{base_name}_onestep.png")
+                    edit_one_step_np = ((edit_one_step + 1.0) * 127.5).clamp(0, 255).cpu().numpy().astype(np.uint8)
+                    edit_one_step_np = np.transpose(edit_one_step_np[0], (1, 2, 0))
+                    Image.fromarray(edit_one_step_np).save(onestep_path)
+                    additional_outputs["onestep"] = onestep_path
+                
+                if edit_multi_step is not None:
+                    multistep_path = os.path.join(output_dir, f"{base_name}_multistep.png")  
+                    edit_multi_step_np = ((edit_multi_step + 1.0) * 127.5).clamp(0, 255).cpu().numpy().astype(np.uint8)
+                    edit_multi_step_np = np.transpose(edit_multi_step_np[0], (1, 2, 0))
+                    Image.fromarray(edit_multi_step_np).save(multistep_path)
+                    additional_outputs["multistep"] = multistep_path
+                
+                return {
+                    "status": "success", 
+                    "model": f"sd1.4 ({attack_mode})",
+                    "output": output_image_path,
+                    "method": "diff_protect",
+                    "attack_mode": attack_mode,
+                    "parameters": {
+                        "epsilon": epsilon,
+                        "steps": steps,
+                        "alpha": alpha,
+                        "attack_mode": attack_mode,
+                        "g_mode": g_mode,
+                        "mode": mode,
+                        "target_rate": target_rate
+                    },
+                    "additional_outputs": additional_outputs
+                }
+                
+            finally:
+                # Restore original working directory
+                os.chdir(original_cwd)
+                
+        except Exception as e:
+            # Restore original working directory in case of error
+            if 'original_cwd' in locals():
+                os.chdir(original_cwd)
+            return {"status": "failed", "method": "diff_protect", "error": f"Diff-Protect direct execution failed: {str(e)}"}
+        
+    def protect_subprocess_fallback(self, 
+                input_image_path: str, 
+                output_image_path: str, 
+                model_name: str = "sd1.4", 
+                prompt: str = "",
+                attack_mode: str = "mist",
+                epsilon: float = 16.0,
+                steps: int = 100,
+                alpha: float = 1.0,
+                input_size: int = 512,
+                g_mode: str = "+",
+                using_target: bool = False,
+                target_rate: int = 5,
+                device: int = 0,
+                **kwargs) -> Dict[str, Any]:
+        """
+        Fallback method using subprocess (original implementation).
         """
         
         # Check if Diff-Protect code exists
