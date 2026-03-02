@@ -200,8 +200,18 @@ def main():
                             target_prompt=target_prompt,
                             model_name=args.edit_model
                         )
+                        # Check if edit returned a failure status
+                        if edit_result.get('status') == 'failed':
+                            print(f"  Editing failed for {filename}: {edit_result.get('error')}")
+                            continue
+                        # Check if the output file was actually created
+                        if not os.path.exists(edited_path):
+                            print(f"  Editing did not produce output file: {edited_path}")
+                            continue
                     except Exception as e:
-                         print(f"Editing error for {filename}: {e}")
+                         print(f"  Editing error for {filename}: {e}")
+                         import traceback
+                         traceback.print_exc()
                          continue
                 else:
                      # No editing
