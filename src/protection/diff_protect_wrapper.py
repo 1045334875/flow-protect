@@ -318,7 +318,9 @@ class DiffProtectWrapper(ProtectionMethod):
             
             # Add input prompt if provided
             if prompt:
-                cmd.extend([f"attack.input_prompt={prompt}"])
+                # Use single quotes to wrap the prompt and escape internal single quotes
+                safe_prompt = prompt.replace("'", "\\'")
+                cmd.extend([f"attack.input_prompt='{safe_prompt}'"])
                 
             # Add additional kwargs
             for key, value in kwargs.items():
