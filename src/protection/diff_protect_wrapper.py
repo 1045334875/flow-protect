@@ -118,9 +118,9 @@ class DiffProtectWrapper(ProtectionMethod):
             cmd = [
                 sys.executable,
                 "diff_mist.py",
-                "attack.epsilon=16",
-                "attack.steps=100", 
-                "attack.input_size=512",
+                f"attack.epsilon={epsilon}",
+                f"attack.steps={steps}", 
+                f"attack.input_size={input_size}",
                 f"attack.mode={attack_mode}",
                 f"attack.img_path={temp_input_dir}",
                 f"attack.output_path={temp_output_dir}",
@@ -128,6 +128,7 @@ class DiffProtectWrapper(ProtectionMethod):
                 f"attack.using_target={str(using_target).lower()}",
                 f"attack.target_rate={target_rate}",
                 f"attack.device={device}",
+                f"attack.alpha={alpha}",
             ]
             
             # Add input prompt if provided
