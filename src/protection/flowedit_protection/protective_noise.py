@@ -29,7 +29,7 @@ class NoiseConfig:
     # 频域噪声参数
     freq_enabled: bool = True
     freq_cutoff: float = 0.3
-    freq_amplitude: float = 0.05
+    freq_amplitude: float = 0.1  # 增大振幅
     
     # 特征空间噪声参数
     feature_enabled: bool = True
@@ -41,7 +41,7 @@ class NoiseConfig:
     texture_enabled: bool = True
     texture_num_scales: int = 4
     texture_num_orientations: int = 4
-    texture_amplitude_range: Tuple[float, float] = (0.02, 0.08)
+    texture_amplitude_range: Tuple[float, float] = (0.05, 0.15)  # 增大振幅
     
     # 速度场噪声参数
     velocity_enabled: bool = False  # 默认禁用，需要流模型
@@ -49,15 +49,17 @@ class NoiseConfig:
     velocity_iterations: int = 30
     velocity_epsilon: float = 0.03
     velocity_num_timesteps: int = 5
+    velocity_loss_strategy: str = 'max_diff'  # 'max_diff', 'orthogonal_source_target', 'orthogonal_guide_diff'
     
     # 综合参数
-    freq_weight: float = 0.3
+    freq_weight: float = 1.0  # 增大权重
+    vertical_weight: float = 0.5
     feature_weight: float = 0.3
-    texture_weight: float = 0.2
+    texture_weight: float = 1.0  # 增大权重
     velocity_weight: float = 0.2
     
     # 约束参数
-    linf_epsilon: float = 8.0 / 255.0  # L∞约束
+    linf_epsilon: float = 16.0 / 255.0  # 增大 L∞约束
     lpips_epsilon: float = 0.1  # LPIPS约束
     
     # 损失函数配置
@@ -124,7 +126,7 @@ class FrequencyDomainNoise:
             image: 输入图像 [C, H, W] 或 [B, C, H, W]，值域[0,1]
             
         Returns:
-            添加噪声后的图像 [C, H, W] 或 [B, C, H, W]
+            纯噪声 (不是加噪后的图像) [C, H, W] 或 [B, C, H, W]
         """
         # 处理批处理维度
         if image.dim() == 3:
@@ -137,40 +139,29 @@ class FrequencyDomainNoise:
         device = image.device
         dtype = image.dtype
         
-        # 创建频率掩码
+        # 创建频率掩码 (高频区域为1)
         mask = self._create_frequency_mask(H, W, device)
         
-        noisy_image = image.clone()
+        # 生成高频噪声
+        noise = torch.randn(B, C, H, W, device=device, dtype=dtype)
         
-        for b in range(B):
-            for c in range(C):
-                # 获取单个通道
-                channel = image[b, c]
-                
-                # FFT变换
-                fft_channel = torch.fft.fft2(channel)
-                
-                # 生成随机相位的噪声
-                random_phase = torch.rand((H, W), device=device) * 2 * np.pi
-                noise_magnitude = self.amplitude * torch.abs(fft_channel)
-                noise_fft = noise_magnitude * torch.exp(1j * random_phase) * mask
-                
-                # 添加噪声到FFT
-                fft_noisy = fft_channel + noise_fft
-                
-                # 逆FFT变换
-                noisy_channel = torch.fft.ifft2(fft_noisy).real
-                
-                # 归一化到[0, 1]
-                noisy_channel = torch.clamp(noisy_channel, 0, 1)
-                
-                # 更新图像
-                noisy_image[b, c] = noisy_channel.to(dtype)
+        # 对噪声进行FFT
+        noise_fft = torch.fft.fft2(noise)
+        
+        # 只保留高频部分
+        noise_fft = noise_fft * mask.unsqueeze(0).unsqueeze(0)
+        
+        # 逆FFT得到高频噪声
+        high_freq_noise = torch.fft.ifft2(noise_fft).real
+        
+        # 归一化噪声到 [-amplitude, amplitude] 范围
+        if high_freq_noise.abs().max() > 1e-8:
+            high_freq_noise = high_freq_noise / high_freq_noise.abs().max() * self.amplitude
         
         if squeeze_output:
-            noisy_image = noisy_image.squeeze(0)
+            high_freq_noise = high_freq_noise.squeeze(0)
         
-        return noisy_image
+        return high_freq_noise
 
 
 class FeatureSpaceAdversarialNoise:
@@ -534,7 +525,8 @@ class VelocityFieldAdversarialNoise:
     
     def __init__(self, flow_model: Optional[nn.Module] = None,
                  lr: float = 0.01, num_iterations: int = 30,
-                 epsilon: float = 0.03, num_timesteps: int = 5):
+                 epsilon: float = 0.03, num_timesteps: int = 5,
+                 loss_strategy: str = 'max_diff'):
         """
         Args:
             flow_model: 预训练的流模型 (FLUX或SD3)，如果为None则跳过此方法
@@ -542,43 +534,271 @@ class VelocityFieldAdversarialNoise:
             num_iterations: 迭代次数
             epsilon: L∞约束
             num_timesteps: 采样的时步数
+            loss_strategy: 优化策略 ('max_diff', 'orthogonal_source_target', 'orthogonal_guide_diff')
         """
         self.flow_model = flow_model
         self.lr = lr
         self.num_iterations = num_iterations
         self.epsilon = epsilon
         self.num_timesteps = num_timesteps
+        self.loss_strategy = loss_strategy
     
     def generate(self, latents: torch.Tensor,
                 src_prompt_embeds: Optional[torch.Tensor] = None,
                 tar_prompt_embeds: Optional[torch.Tensor] = None,
-                model_type: str = 'FLUX') -> torch.Tensor:
+                src_pooled_prompt_embeds: Optional[torch.Tensor] = None,
+                tar_pooled_prompt_embeds: Optional[torch.Tensor] = None,
+                src_text_ids: Optional[torch.Tensor] = None,
+                tar_text_ids: Optional[torch.Tensor] = None,
+                model_type: str = 'sd3') -> torch.Tensor:
         """
         生成速度场对抗噪声
         
-        注意: 此方法的完整实现需要访问流模型的内部结构
-        当前版本返回原始潜在表示，作为占位符
-        
         Args:
             latents: 潜在表示 [B, C, H, W]
-            src_prompt_embeds: 源提示嵌入
-            tar_prompt_embeds: 目标提示嵌入
-            model_type: 模型类型
+            src_prompt_embeds: 源提示嵌入 (必需)
+            tar_prompt_embeds: 目标提示嵌入 (用于 orthogonal_guide_diff 策略)
+            src_pooled_prompt_embeds: 源池化提示嵌入 (SD3/Flux)
+            tar_pooled_prompt_embeds: 目标池化提示嵌入 (SD3/Flux)
+            src_text_ids: 源文本ID (Flux必需)
+            tar_text_ids: 目标文本ID (Flux必需)
+            model_type: 模型类型 ('sd3' 或 'flux')
             
         Returns:
             添加噪声后的潜在表示
         """
         if self.flow_model is None:
             return latents.clone()
+            
+        # 复制潜在表示并启用梯度
+        adv_latents = latents.clone().detach().requires_grad_(True)
+        clean_latents = latents.clone().detach()
+        optimizer = torch.optim.Adam([adv_latents], lr=self.lr)
         
-        # 占位符实现
-        # 完整实现需要:
-        # 1. 计算源和目标速度场
-        # 2. 通过梯度上升最大化速度场差异
-        # 3. 生成对抗潜在表示
+        # 获取时间步调度器
+        scheduler = self.flow_model.scheduler
+        num_train_timesteps = scheduler.config.num_train_timesteps
+        timesteps = np.linspace(0, num_train_timesteps - 1, self.num_timesteps).astype(int)
+        timesteps = torch.from_numpy(timesteps).to(latents.device).flip(0) # 从大到小
         
-        print("警告: VelocityFieldAdversarialNoise 需要流模型的完整访问权限")
-        return latents.clone()
+        # Flux 准备工作
+        flux_img_ids = None
+        flux_params = {}
+        if model_type == 'flux':
+            # 获取 latent_image_ids
+            # 假设 flow_model 是 FluxPipeline
+            height, width = latents.shape[-2:]
+            # 需要原始高度宽度，因为 latents 是缩放后的
+            # 这里假设 pipe.vae_scale_factor 可用
+            vae_scale_factor = getattr(self.flow_model, 'vae_scale_factor', 8)
+            orig_height = height * vae_scale_factor
+            orig_width = width * vae_scale_factor
+            
+            # 使用 prepare_latents 获取 IDs (不做 VAE encode)
+            # 注意：prepare_latents 可能返回 tuple (latents, ids)
+            # 我们只需要 ids
+            try:
+                num_channels_latents = latents.shape[1]
+                _, flux_img_ids = self.flow_model.prepare_latents(
+                    batch_size=latents.shape[0],
+                    num_channels_latents=num_channels_latents,
+                    height=orig_height,
+                    width=orig_width,
+                    dtype=latents.dtype,
+                    device=latents.device,
+                    generator=None,
+                    latents=latents # 传入 latents 以跳过编码
+                )
+            except Exception as e:
+                print(f"Warning: Failed to prepare Flux latents: {e}")
+                return latents # 无法继续
+                
+            flux_params['img_ids'] = flux_img_ids
+            flux_params['orig_height'] = orig_height
+            flux_params['orig_width'] = orig_width
+            
+            # Guidance
+            # Flux 通常需要 guidance
+            # 简单起见，使用固定 guidance scale
+            flux_guidance = torch.tensor([1.5], device=latents.device).expand(latents.shape[0])
+            flux_params['guidance'] = flux_guidance
+            
+            if src_text_ids is None:
+                print("Warning: Flux model requires src_text_ids")
+                return latents
+        
+        print(f"Running Velocity Attack with strategy: {self.loss_strategy} on {model_type}")
+        
+        for iteration in range(self.num_iterations):
+            optimizer.zero_grad()
+            total_loss = 0
+            
+            # 使用相同的噪声进行采样，确保比较的公平性
+            noise = torch.randn_like(adv_latents)
+            
+            for t in timesteps:
+                t_float = t.float()
+                # t 归一化到 [0, 1]
+                t_norm = t_float / num_train_timesteps
+                timestep = t_float.expand(latents.shape[0])
+                
+                # 1. 计算 Clean Latents 的状态和速度场 (Source V)
+                zt_clean = (1 - t_norm) * clean_latents + t_norm * noise
+                
+                # 只有在不需要梯度时才使用 no_grad，但在对抗攻击中，我们只需要对 adv_latents 求导
+                # source_v 不需要梯度
+                with torch.no_grad():
+                    if model_type == 'sd3':
+                        source_v = self.flow_model.transformer(
+                            hidden_states=zt_clean,
+                            timestep=timestep,
+                            encoder_hidden_states=src_prompt_embeds,
+                            pooled_projections=src_pooled_prompt_embeds,
+                            return_dict=False,
+                        )[0]
+                        
+                        # 如果需要计算编辑方向 (Guide Vector)，还需要计算目标 Prompt 下的 Clean V
+                        guide_v = None
+                        if self.loss_strategy == 'orthogonal_guide_diff' and tar_prompt_embeds is not None:
+                             # SD3 安全检查：确保有 pooled embeddings
+                            tar_pooled = tar_pooled_prompt_embeds if tar_pooled_prompt_embeds is not None else src_pooled_prompt_embeds
+                            
+                            target_v_clean = self.flow_model.transformer(
+                                hidden_states=zt_clean,
+                                timestep=timestep,
+                                encoder_hidden_states=tar_prompt_embeds,
+                                pooled_projections=tar_pooled,
+                                return_dict=False,
+                            )[0]
+                            # 编辑方向向量：从源指向目标
+                            guide_v = target_v_clean - source_v
+                    elif model_type == 'flux':
+                        # Flux Forward
+                        # 需要先 pack latents
+                        num_channels = latents.shape[1]
+                        zt_clean_packed = self.flow_model._pack_latents(
+                            zt_clean, zt_clean.shape[0], num_channels, 
+                            zt_clean.shape[2], zt_clean.shape[3]
+                        )
+                        
+                        source_v_packed = self.flow_model.transformer(
+                            hidden_states=zt_clean_packed,
+                            timestep=timestep / 1000, # Flux timestep scaling
+                            guidance=flux_params['guidance'],
+                            encoder_hidden_states=src_prompt_embeds,
+                            txt_ids=src_text_ids,
+                            img_ids=flux_params['img_ids'],
+                            pooled_projections=src_pooled_prompt_embeds,
+                            return_dict=False,
+                        )[0]
+                        
+                        # Unpack source_v for consistent loss calculation (optional, but good for L2)
+                        # source_v = self.flow_model._unpack_latents(
+                        #    source_v_packed, flux_params['orig_height'], flux_params['orig_width'], vae_scale_factor
+                        # )
+                        # 或者直接在 packed 空间计算 loss，更高效
+                        source_v = source_v_packed
+                        
+                        guide_v = None
+                        if self.loss_strategy == 'orthogonal_guide_diff' and tar_prompt_embeds is not None:
+                            tar_pooled = tar_pooled_prompt_embeds if tar_pooled_prompt_embeds is not None else src_pooled_prompt_embeds
+                            target_v_packed = self.flow_model.transformer(
+                                hidden_states=zt_clean_packed,
+                                timestep=timestep / 1000,
+                                guidance=flux_params['guidance'],
+                                encoder_hidden_states=tar_prompt_embeds,
+                                txt_ids=tar_text_ids if tar_text_ids is not None else src_text_ids,
+                                img_ids=flux_params['img_ids'],
+                                pooled_projections=tar_pooled,
+                                return_dict=False,
+                            )[0]
+                            guide_v = target_v_packed - source_v
+
+                # 2. 计算 Adv Latents 的状态和速度场 (Target V / Adv V)
+                zt_adv = (1 - t_norm) * adv_latents + t_norm * noise
+                
+                if model_type == 'sd3':
+                    adv_v = self.flow_model.transformer(
+                        hidden_states=zt_adv,
+                        timestep=timestep,
+                        encoder_hidden_states=src_prompt_embeds,
+                        pooled_projections=src_pooled_prompt_embeds,
+                        return_dict=False,
+                    )[0]
+                elif model_type == 'flux':
+                    # Pack adv latents
+                    # 注意：_pack_latents 操作是可微的 (reshape/transpose)
+                    zt_adv_packed = self.flow_model._pack_latents(
+                        zt_adv, zt_adv.shape[0], num_channels,
+                        zt_adv.shape[2], zt_adv.shape[3]
+                    )
+                    
+                    adv_v_packed = self.flow_model.transformer(
+                        hidden_states=zt_adv_packed,
+                        timestep=timestep / 1000,
+                        guidance=flux_params['guidance'],
+                        encoder_hidden_states=src_prompt_embeds,
+                        txt_ids=src_text_ids,
+                        img_ids=flux_params['img_ids'],
+                        pooled_projections=src_pooled_prompt_embeds,
+                        return_dict=False,
+                    )[0]
+                    adv_v = adv_v_packed
+                
+                # 3. 计算 Loss
+                loss = torch.tensor(0.0, device=latents.device)
+                
+                if self.loss_strategy == 'max_diff':
+                    # 策略1: 最大化 L2 距离 (让对抗样本的速度场尽可能远离原始速度场)
+                    loss = -torch.norm(adv_v - source_v, p=2)
+                    
+                elif self.loss_strategy == 'orthogonal_source_target':
+                    # 策略2: 正交化 (让对抗样本的速度场与原始速度场正交)
+                    # Cosine Similarity = (A . B) / (|A| * |B|)
+                    # 我们希望 Abs(Cos) 最小 (趋近于0)
+                    
+                    # Flatten vectors for dot product: [B, C, H, W] -> [B, -1]
+                    v1 = adv_v.reshape(adv_v.shape[0], -1)
+                    v2 = source_v.reshape(source_v.shape[0], -1)
+                    
+                    # Normalize
+                    v1_norm = F.normalize(v1, p=2, dim=1)
+                    v2_norm = F.normalize(v2, p=2, dim=1)
+                    
+                    # Cosine similarity (Dot product of normalized vectors)
+                    cos_sim = torch.sum(v1_norm * v2_norm, dim=1)
+                    
+                    # Minimize absolute cosine similarity (Orthogonal)
+                    loss = torch.mean(torch.abs(cos_sim)) * 10.0  # Scale up
+                    
+                elif self.loss_strategy == 'orthogonal_guide_diff':
+                    # 策略3: 与编辑方向正交 (让对抗样本的速度场与“原始-目标”编辑方向正交)
+                    if guide_v is not None:
+                        v1 = adv_v.reshape(adv_v.shape[0], -1)
+                        v2 = guide_v.reshape(guide_v.shape[0], -1) # Guide vector
+                        
+                        v1_norm = F.normalize(v1, p=2, dim=1)
+                        v2_norm = F.normalize(v2, p=2, dim=1)
+                        
+                        cos_sim = torch.sum(v1_norm * v2_norm, dim=1)
+                        loss = torch.mean(torch.abs(cos_sim)) * 10.0
+                    else:
+                        # Fallback if no target prompt provided
+                        loss = -torch.norm(adv_v - source_v, p=2)
+                
+                total_loss += loss
+            
+            # 反向传播
+            total_loss.backward()
+            optimizer.step()
+            
+            # 投影
+            with torch.no_grad():
+                delta = adv_latents - latents
+                delta = torch.clamp(delta, -self.epsilon, self.epsilon)
+                adv_latents.data = latents + delta
+                
+        return adv_latents.detach()
 
 
 class ProtectiveNoiseOptimizer:
@@ -619,7 +839,8 @@ class ProtectiveNoiseOptimizer:
             lr=config.velocity_lr,
             num_iterations=config.velocity_iterations,
             epsilon=config.velocity_epsilon,
-            num_timesteps=config.velocity_num_timesteps
+            num_timesteps=config.velocity_num_timesteps,
+            loss_strategy=config.velocity_loss_strategy
         ) if config.velocity_enabled else None
     
     def set_feature_extractor(self, feature_extractor: nn.Module):
@@ -647,23 +868,22 @@ class ProtectiveNoiseOptimizer:
         """
         # 累积噪声
         total_noise = torch.zeros_like(image)
-        total_weight = 0.0
+        noise_count = 0
         
-        # 频域噪声
+        # 频域噪声 - 现在直接返回纯噪声
         if self.config.freq_enabled and self.freq_noise is not None and \
            self.config.freq_weight > 0:
-            freq_noisy = self.freq_noise.generate(image)
-            freq_noise = freq_noisy - image  # 提取噪声部分
+            freq_noise = self.freq_noise.generate(image)
             total_noise = total_noise + freq_noise * self.config.freq_weight
-            total_weight += self.config.freq_weight
+            noise_count += 1
         
-        # 纹理噪声
+        # 纹理噪声 - 还是返回加噪图像，需要提取噪声
         if self.config.texture_enabled and self.texture_noise is not None and \
            self.config.texture_weight > 0:
             texture_noisy = self.texture_noise.generate(image)
             texture_noise = texture_noisy - image  # 提取噪声部分
             total_noise = total_noise + texture_noise * self.config.texture_weight
-            total_weight += self.config.texture_weight
+            noise_count += 1
         
         # 特征空间噪声
         if self.config.feature_enabled and self.feature_noise is not None and \
@@ -671,19 +891,25 @@ class ProtectiveNoiseOptimizer:
             feature_noisy = self.feature_noise.generate(image, source_image)
             feature_noise = feature_noisy - image  # 提取噪声部分
             total_noise = total_noise + feature_noise * self.config.feature_weight
-            total_weight += self.config.feature_weight
+            noise_count += 1
         
         # 速度场噪声
         if self.config.velocity_enabled and self.velocity_noise is not None and \
            self.config.velocity_weight > 0:
-            velocity_noisy = self.velocity_noise.generate(image)
-            velocity_noise = velocity_noisy - image  # 提取噪声部分
-            total_noise = total_noise + velocity_noise * self.config.velocity_weight
-            total_weight += self.config.velocity_weight
+            # 需要潜在空间表示
+            # 这是一个简化的假设：我们假设输入的 image 已经是 latent 或者可以被转换为 latent
+            # 在实际使用中，我们需要从外部传入 VAE 和 Encoder
+            # 目前暂时跳过这个复杂的集成步骤，或者需要重构接口
+            print("警告: VelocityFieldAdversarialNoise 需要在潜在空间操作，当前接口暂不支持直接图像输入")
+            # velocity_noisy = self.velocity_noise.generate(image)
+            # velocity_noise = velocity_noisy - image  # 提取噪声部分
+            # total_noise = total_noise + velocity_noise * self.config.velocity_weight
+            # noise_count += 1
+            pass
         
-        # 归一化噪声权重
-        if total_weight > 0:
-            total_noise = total_noise / total_weight
+        # 如果没有任何噪声，直接返回原图
+        if noise_count == 0:
+            return image
         
         # 应用 L∞ 约束
         eps = self.config.linf_epsilon
